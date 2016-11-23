@@ -1,5 +1,7 @@
 #include <iostream>
 #include <vector>
+#include <string>
+#include <unordered_map>
 using namespace std;
 
 // Instruction set
@@ -7,7 +9,9 @@ enum class OpCode
 {
     LOAD_VALUE,
     ADD_TWO_VALUES,
-    PRINT_ANSWER
+    PRINT_ANSWER,
+    STORE_NAME,
+    LOAD_NAME
 };
 
 struct Instruction
@@ -20,11 +24,13 @@ struct Program
 {
     vector<Instruction> Instructions;
     vector<int> NumberConstants;
+    vector<string> Names;
 };
 
 void Run(const Program &p, const bool debug)
 {
     vector<int> Stack;
+    unordered_map<string, int> Variables;
 
     for (auto Instruction : p.Instructions)
     {
@@ -32,9 +38,26 @@ void Run(const Program &p, const bool debug)
         {
         case OpCode::LOAD_VALUE:
             {
-                int Index = Instruction.Argument;
-                if (debug) cout << "LOAD_VALUE " << Index << endl;
-                int Value = p.NumberConstants[Index];
+                int ConstantIndex = Instruction.Argument;
+                if (debug) cout << "LOAD_VALUE " << ConstantIndex << endl;
+                int Value = p.NumberConstants[ConstantIndex];
+                Stack.push_back(Value);
+            }
+            break;
+        case OpCode::STORE_NAME:
+            {
+                int NameIndex = Instruction.Argument;
+                if (debug) cout << "STORE_NAME " << NameIndex << endl;
+                int Value = Stack.back();
+                Stack.pop_back();
+                Variables[p.Names[NameIndex]] = Value;
+            }
+            break;
+        case OpCode::LOAD_NAME:
+            {
+                int NameIndex = Instruction.Argument;
+                if (debug) cout << "LOAD_NAME " << NameIndex << endl;
+                int Value = Variables[p.Names[NameIndex]];
                 Stack.push_back(Value);
             }
             break;
@@ -63,31 +86,23 @@ void Run(const Program &p, const bool debug)
 
 int main()
 {
-    // print 5 + 7
+    // a = 1
+    // b = 2
+    // print a + b
     const Program p {
         {
             {OpCode::LOAD_VALUE, 0},
+            {OpCode::STORE_NAME, 0},
             {OpCode::LOAD_VALUE, 1},
-            {OpCode::ADD_TWO_VALUES, 0},
-            {OpCode::PRINT_ANSWER, 0},
+            {OpCode::STORE_NAME, 1},
+            {OpCode::LOAD_NAME, 0},
+            {OpCode::LOAD_NAME, 1},
+            {OpCode::ADD_TWO_VALUES},
+            {OpCode::PRINT_ANSWER},
         },
-        {5, 7}
+        {1, 2},
+        {"a", "b"}
     };
 
     Run(p, true);
-
-    // print 7 + 5 + 8
-    const Program p2 {
-        {
-            {OpCode::LOAD_VALUE, 0},
-            {OpCode::LOAD_VALUE, 1},
-            {OpCode::ADD_TWO_VALUES, 0},
-            {OpCode::LOAD_VALUE, 2},
-            {OpCode::ADD_TWO_VALUES, 0},
-            {OpCode::PRINT_ANSWER, 0},
-        },
-        {7, 5, 8}
-    };
-
-    Run(p2, true);
 }
