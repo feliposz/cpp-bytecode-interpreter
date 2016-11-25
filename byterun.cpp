@@ -13,6 +13,10 @@ enum class OpCode
     COMPARE_OP,
     POP_JUMP_IF_FALSE,
     RETURN_VALUE,
+    SETUP_LOOP,
+    BINARY_ADD,
+    JUMP_ABSOLUTE,
+    POP_BLOCK,
 };
 
 enum CompareOperator
@@ -90,7 +94,7 @@ void ReturnObject(Object o)
     }
 }
 
-bool CompareObject(CompareOperator Operator, Object Left, Object Right)
+bool CompareObject(const CompareOperator Operator, const Object& Left, const Object& Right)
 {
     bool Result = false;
     if (Left.Type == ObjectType::INTEGER && Right.Type == ObjectType::INTEGER)
@@ -139,6 +143,31 @@ bool CompareObject(CompareOperator Operator, Object Left, Object Right)
     return Result;
 }
 
+Object AddObjects(const Object& Left, const Object& Right)
+{
+    Object Result {};
+    if (Left.Type == ObjectType::INTEGER && Right.Type == ObjectType::INTEGER)
+    {
+        Result.Type = ObjectType::INTEGER;
+        Result.Integer = Left.Integer + Right.Integer;
+    }
+    else if (Left.Type == ObjectType::FLOAT && Right.Type == ObjectType::FLOAT)
+    {
+        Result.Type = ObjectType::FLOAT;
+        Result.Float = Left.Float + Right.Float;
+    }
+    else if (Left.Type == ObjectType::STRING && Right.Type == ObjectType::STRING)
+    {
+        Result.Type = ObjectType::STRING;
+        Result.String = Left.String + Right.String;
+    }
+    else
+    {
+        cerr << "Type Mismatch!" << endl;
+    }
+    return Result;
+}
+
 bool IsTrueValue(Object o)
 {
     bool Result = false;
@@ -178,7 +207,8 @@ void Run(const Program &p, const bool debug)
 
     while (InstructionPointer < p.Instructions.size())
     {
-
+        bool BreakLoop = false;
+        bool IncrementPointer = true;
         auto Instruction = p.Instructions[InstructionPointer];
 
         // TODO: Check stack underflow!
@@ -219,6 +249,7 @@ void Run(const Program &p, const bool debug)
                 Stack.pop_back();
                 Object Left = Stack.back();
                 Stack.pop_back();
+                if (debug) cout << "Left: " << Left.Integer << " Right: " << Right.Integer << endl;
                 bool Result = CompareObject(Operator, Left, Right);
                 Stack.push_back(Result ? Object {1} : Object {0});
             }
@@ -231,7 +262,7 @@ void Run(const Program &p, const bool debug)
                 if (!IsTrueValue(Value))
                 {
                     InstructionPointer = Instruction.Argument;
-                    continue;
+                    IncrementPointer = false;
                 }
             }
             break;
@@ -241,51 +272,98 @@ void Run(const Program &p, const bool debug)
                 Object Value = Stack.back();
                 Stack.pop_back();
                 ReturnObject(Value);
-                InstructionPointer = p.Instructions.size();
+                BreakLoop = true;
                 // TODO: Find a better way to gracefully return...
+            }
+            break;
+        case OpCode::SETUP_LOOP:
+            {
+                int RelativeJump = Instruction.Argument;
+                if (debug) cout << "SETUP_LOOP " << RelativeJump << endl;
+                Stack.push_back(Object {InstructionPointer + 1 + RelativeJump});
+            }
+            break;
+        case OpCode::POP_BLOCK:
+            {
+                if (debug) cout << "POP_BLOCK" << endl;
+                Object Jump = Stack.back();
+                Stack.pop_back();
+                InstructionPointer = Jump.Integer;
+                IncrementPointer = false;
+            }
+            break;
+        case OpCode::JUMP_ABSOLUTE:
+            {
+                int AbsoluteJump = Instruction.Argument;
+                if (debug) cout << "JUMP_ABSOLUTE" << AbsoluteJump << endl;
+                InstructionPointer = AbsoluteJump;
+                IncrementPointer = false;
+            }
+            break;
+        case OpCode::BINARY_ADD:
+            {
+                if (debug) cout << "BINARY_ADD" << endl;
+                Object Left = Stack.back();
+                Stack.pop_back();
+                Object Right = Stack.back();
+                Stack.pop_back();
+                Stack.push_back(AddObjects(Left, Right));
             }
             break;
         default:
             {
-                // TODO: log invalid instruction
+                cerr << "Instruction not implemented!" << endl;
+                BreakLoop = true;
+                IncrementPointer = false;
             }
             break;
         }
 
-        if (debug) cout << "    Stack size: " << Stack.size() << endl;
+        if (debug)
+        {
+            cout << "    Stack size: " << Stack.size() << endl;
+        }
 
-        InstructionPointer++;
+        if (IncrementPointer)
+        {
+            InstructionPointer++;
+        }
+
+        if (BreakLoop)
+        {
+            break;
+        }
     }
 }
 
 int main()
 {
-    // x = 3
-    // if x < 5:
-    //     return 'yes'
-    // else:
-    //     return 'no'
-    const Program p  {
+    // x = 1
+    // while x < 5:
+    //     x = x + 1
+    // return x
+    const Program p {
         {
             {OpCode::LOAD_CONST, 1},
             {OpCode::STORE_FAST, 0},
-            {OpCode::LOAD_FAST, 0},
+            {OpCode::SETUP_LOOP, +10}, // (to 13, jump is relative to next instruction)
+            {OpCode::LOAD_FAST, 0}, // 3
             {OpCode::LOAD_CONST, 2},
             {OpCode::COMPARE_OP, LESS_THAN},
-            {OpCode::POP_JUMP_IF_FALSE, 8},
-            {OpCode::LOAD_CONST, 3},
-            {OpCode::RETURN_VALUE},
-            {OpCode::LOAD_CONST, 4}, // << JUMP
-            {OpCode::RETURN_VALUE},
-            {OpCode::LOAD_CONST, 0},
+            {OpCode::POP_JUMP_IF_FALSE, 12},
+            {OpCode::LOAD_FAST, 0},
+            {OpCode::LOAD_CONST, 1},
+            {OpCode::BINARY_ADD},
+            {OpCode::STORE_FAST, 0},
+            {OpCode::JUMP_ABSOLUTE, 3},
+            {OpCode::POP_BLOCK}, // 12
+            {OpCode::LOAD_FAST, 0}, // 13 (3 + 10)
             {OpCode::RETURN_VALUE},
         },
         {
             Object {},
-            Object {3},
+            Object {1},
             Object {5},
-            Object {"yes"},
-            Object {"no"},
         },
         {
             "x"
