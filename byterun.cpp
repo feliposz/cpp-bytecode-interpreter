@@ -17,6 +17,8 @@ enum class OpCode
     BINARY_ADD,
     JUMP_ABSOLUTE,
     POP_BLOCK,
+    LOAD_GLOBAL,
+    CALL_FUNCTION,
 };
 
 enum CompareOperator
@@ -41,6 +43,7 @@ enum class ObjectType
     INTEGER,
     FLOAT,
     STRING,
+    UNIT,
 };
 
 struct Object
@@ -51,18 +54,27 @@ struct Object
         int Integer;
         float Float;
         string String;
+        void* Unit;
     };
     Object() : Type {ObjectType::NONE} {}
     Object(int i) : Type {ObjectType::INTEGER}, Integer {i} {}
     Object(float f) : Type {ObjectType::FLOAT}, Float {f} {}
     Object(string s) : Type {ObjectType::STRING} { String = s; }
+    Object(void *u) : Type {ObjectType::UNIT} { Unit = u; }
+};
+
+struct Unit
+{
+    vector<Instruction> Instructions;
+    vector<Object> Constants;
+    vector<string> LocalNames;
+    vector<string> GlobalNames;
 };
 
 struct Program
 {
-    vector<Instruction> Instructions;
-    vector<Object> Constants;
-    vector<string> Names;
+    string EntryPoint;
+    unordered_map<string, Object> Globals;
 };
 
 void ReturnObject(Object o)
@@ -197,22 +209,24 @@ bool IsTrueValue(Object o)
     return Result;
 }
 
-void Run(const Program &p, const bool debug)
+Object RunUnit(Program& p, const Unit* u, const bool debug, int NumArguments = 0, vector<Object> Arguments = {})
 {
-
+    Object Result;
     vector<Object> Stack;
     unordered_map<string, Object> Variables;
 
     auto InstructionPointer = 0;
 
-    while (InstructionPointer < p.Instructions.size())
+    while (InstructionPointer < u->Instructions.size())
     {
         bool BreakLoop = false;
         bool IncrementPointer = true;
-        auto Instruction = p.Instructions[InstructionPointer];
+        auto Instruction = u->Instructions[InstructionPointer];
 
         // TODO: Check stack underflow!
         // TODO: Check undefined variables!
+        // TODO: Use actual frames
+        // TODO: Find a better way to manage globals
 
         switch (Instruction.Code)
         {
@@ -220,7 +234,7 @@ void Run(const Program &p, const bool debug)
             {
                 int ConstantIndex = Instruction.Argument;
                 if (debug) cout << "LOAD_CONST " << ConstantIndex << endl;
-                Object Value = p.Constants[ConstantIndex];
+                Object Value = u->Constants[ConstantIndex];
                 Stack.push_back(Value);
             }
             break;
@@ -230,14 +244,23 @@ void Run(const Program &p, const bool debug)
                 if (debug) cout << "STORE_NAME " << NameIndex << endl;
                 Object Value = Stack.back();
                 Stack.pop_back();
-                Variables[p.Names[NameIndex]] = Value;
+                Variables[u->LocalNames[NameIndex]] = Value;
             }
             break;
         case OpCode::LOAD_FAST:
             {
                 int NameIndex = Instruction.Argument;
                 if (debug) cout << "LOAD_NAME " << NameIndex << endl;
-                Object Value = Variables[p.Names[NameIndex]];
+                Object Value = Variables[u->LocalNames[NameIndex]];
+                Stack.push_back(Value);
+            }
+            break;
+        case OpCode::LOAD_GLOBAL:
+            {
+                int NameIndex = Instruction.Argument;
+                if (debug) cout << "LOAD_GLOBAL " << NameIndex << endl;
+                string key = u->GlobalNames[NameIndex];
+                Object Value = p.Globals[key];
                 Stack.push_back(Value);
             }
             break;
@@ -273,7 +296,7 @@ void Run(const Program &p, const bool debug)
                 Stack.pop_back();
                 ReturnObject(Value);
                 BreakLoop = true;
-                // TODO: Find a better way to gracefully return...
+                Result = Value;
             }
             break;
         case OpCode::SETUP_LOOP:
@@ -310,6 +333,31 @@ void Run(const Program &p, const bool debug)
                 Stack.push_back(AddObjects(Left, Right));
             }
             break;
+        case OpCode::CALL_FUNCTION:
+            {
+                int CallNumArguments = Instruction.Argument;
+                if (debug) cout << "CALL_FUNCTION " << NumArguments << endl;
+                vector<Object> CallArguments {};
+                // TODO: Check order for arguments (probably reversed here...)
+                for (int i = 0; i < CallNumArguments; i++)
+                {
+                    CallArguments.push_back(Stack.back());
+                    Stack.pop_back();
+                }
+                Object u = Stack.back();
+                Stack.pop_back();
+                if (u.Type == ObjectType::UNIT)
+                {
+                    Object ResultUnit = RunUnit(p, (const Unit *)u.Unit, debug, CallNumArguments, CallArguments);
+                    Stack.push_back(ResultUnit);
+                }
+                else
+                {
+                    cerr << "Not callable unit!" << endl;
+                    BreakLoop = true;
+                }
+            }
+            break;
         default:
             {
                 cerr << "Instruction not implemented!" << endl;
@@ -334,41 +382,87 @@ void Run(const Program &p, const bool debug)
             break;
         }
     }
+
+    return Result;
+}
+
+void RunProgram(Program& p, const bool Debug)
+{
+    Object& Entry = p.Globals[p.EntryPoint];
+    if (Entry.Type == ObjectType::UNIT)
+    {
+        RunUnit(p, (const Unit *)Entry.Unit, Debug);
+    }
+    else
+    {
+        cerr << "Not a valid entry point!" << endl;
+    }
 }
 
 int main()
 {
-    // x = 1
-    // while x < 5:
-    //     x = x + 1
-    // return x
-    const Program p {
+
+    // def bar(y):
+    //     z = y + 3
+    //     return z
+    //
+    Unit BarUnit
+    {
         {
-            {OpCode::LOAD_CONST, 1},
-            {OpCode::STORE_FAST, 0},
-            {OpCode::SETUP_LOOP, +10}, // (to 13, jump is relative to next instruction)
-            {OpCode::LOAD_FAST, 0}, // 3
-            {OpCode::LOAD_CONST, 2},
-            {OpCode::COMPARE_OP, LESS_THAN},
-            {OpCode::POP_JUMP_IF_FALSE, 12},
             {OpCode::LOAD_FAST, 0},
             {OpCode::LOAD_CONST, 1},
             {OpCode::BINARY_ADD},
+            {OpCode::STORE_FAST, 1},
+            {OpCode::LOAD_FAST, 1},
+            {OpCode::RETURN_VALUE},
+        },
+        {
+            Object {},
+            Object {3},
+        },
+        {
+            "y",
+            "z",
+        },
+        {},
+    };
+
+    // def foo():
+    //     a = 1
+    //     b = 2
+    //     return a + bar(b)
+    Unit FooUnit
+    {
+        {
+            {OpCode::LOAD_CONST, 1},
             {OpCode::STORE_FAST, 0},
-            {OpCode::JUMP_ABSOLUTE, 3},
-            {OpCode::POP_BLOCK}, // 12
-            {OpCode::LOAD_FAST, 0}, // 13 (3 + 10)
+            {OpCode::LOAD_CONST, 2},
+            {OpCode::STORE_FAST, 1},
+            {OpCode::LOAD_FAST, 0},
+            {OpCode::LOAD_GLOBAL, 0},
+            {OpCode::LOAD_FAST, 1},
+            {OpCode::CALL_FUNCTION, 1},
+            {OpCode::BINARY_ADD},
             {OpCode::RETURN_VALUE},
         },
         {
             Object {},
             Object {1},
-            Object {5},
+            Object {2},
         },
         {
-            "x"
-        }
+            "a",
+            "b",
+        },
+        {
+            "bar"
+        },
     };
 
-    Run(p, true);
+    Program p {"foo"};
+
+    p.Globals["foo"] = Object {&FooUnit};
+    p.Globals["bar"] = Object {&BarUnit};
+
+    RunProgram(p, true);
 }
